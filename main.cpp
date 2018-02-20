@@ -25,10 +25,12 @@ namespace cds {
             struct Node {
                 int * keys;
                 int type;
+                int number_of_keys;
 
                 Node(int number_of_keys){
                     keys = new int[number_of_keys];
                     type = type_node;
+                    this->number_of_keys = number_of_keys;
                 };
 
                 ~Node(){
@@ -36,6 +38,8 @@ namespace cds {
                         delete [] keys;
                     }
                 }
+
+                virtual void * some_func(){};
             };
 
             struct Leaf : public Node {
@@ -61,6 +65,18 @@ namespace cds {
                     if (c_nodes){
                         delete [] c_nodes;
                     }
+                }
+
+                Node * get_c_node(int key,int & pindex){
+                    int i = 0;
+                    for (i; i < number_of_keys; ++i) {
+                        if(key < this->keys[i]){
+                            pindex = i;
+                            return this->c_nodes[i];
+                        }
+                    }
+                    pindex = i;
+                    return this->c_nodes[i];
                 }
             };
 
@@ -157,20 +173,20 @@ namespace cds {
             SearchResult * search(int key){
                 Node * gparent = root;
                 Node * parent = root;
-                Node * leaf = (InternalNode*)parent->c_nodes[0];
-                UpdateStep gppending = parent->pending;
-                UpdateStep ppending = parent->pending;
+                Node * leaf = dynamic_cast<InternalNode*>(parent)->c_nodes[0];
+                UpdateStep * gppending = &(dynamic_cast<InternalNode*>(parent)->pending);
+                UpdateStep * ppending = &(dynamic_cast<InternalNode*>(parent)->pending);
                 int gpindex = 1;
                 int pindex = 1;
                 while (leaf->type == type_internal){
                     gparent = parent;
                     gppending = ppending;
                     parent = leaf;
-                    ppending = parent->pending;
+                    ppending = &(dynamic_cast<InternalNode*>(parent)->pending);
                     gpindex = pindex;
-                    //TODO добавить правильный поиск ребенка
+                    leaf = dynamic_cast<InternalNode*>(parent)->get_c_node(key,pindex);
                 }
-
+                return new SearchResult(gparent,parent,leaf,ppending,gppending,pindex,gpindex);
             }
 
         };
@@ -180,6 +196,7 @@ namespace cds {
 
 int main() {
     auto *brownHelgaKtree = new cds::container::BrownHelgaKtree();
+    auto * result = brownHelgaKtree->search(1);
     return 0;
 //    std::cout <<NULL;
 }
