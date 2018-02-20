@@ -27,7 +27,9 @@ namespace cds {
             };
 
             struct Clean : public UpdateStep {
-                Clean():type(type_clean){};
+                Clean(){
+                    this->type = type_clean;
+                };
             };
 
             struct Node {
@@ -94,7 +96,8 @@ namespace cds {
                 Node * newChild;
                 int pindex;
 
-                ReplaceFlag(Node * l, Node * p, Node * newChild, int pindex):type(type_replace){
+                ReplaceFlag(Node * l, Node * p, Node * newChild, int pindex){
+                    this->type = type_replace;
                     this->l = l;
                     this->p = p;
                     this->newChild = newChild;
@@ -115,7 +118,8 @@ namespace cds {
                 UpdateStep * ppending;
                 int gpindex;
 
-                PruneFlag(Node * l, Node * p, Node * gp, UpdateStep * ppending):type(type_prune){
+                PruneFlag(Node * l, Node * p, Node * gp, UpdateStep * ppending){
+                    this->type = type_prune;
                     this->l = l;
                     this->p = p;
                     this->gp = gp;
@@ -133,7 +137,8 @@ namespace cds {
             struct Mark : public UpdateStep {
                 PruneFlag * pending;
 
-                Mark(PruneFlag * pending):type(type_mark){
+                Mark(PruneFlag * pending){
+                    this->type = type_mark;
                     this->pending = pending;
                 };
 
