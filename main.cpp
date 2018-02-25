@@ -3,6 +3,7 @@
 
 
 #include <climits>
+#include <atomic>
 #include <vector>
 #include <iostream>
 
@@ -24,63 +25,77 @@ namespace cds {
 
             struct UpdateStep {
                 int type = type_update_state;
+
+                virtual void *support_function() {};
+
             };
 
             struct Clean : public UpdateStep {
-                Clean(){
+                Clean() {
                     this->type = type_clean;
                 };
             };
 
             struct Node {
-                int *keys;
                 int type;
                 int number_of_keys;
+                std::atomic<int *> keys;
 
                 Node(int number_of_keys) {
-                    keys = new int[number_of_keys];
                     type = type_node;
+                    keys.store(new int[number_of_keys]);
                     this->number_of_keys = number_of_keys;
                 };
 
                 ~Node() {
                     if (keys) {
-                        delete[] keys;
+//                        delete[] keys;
                     }
                 }
 
-                virtual void *some_func() {};
+                virtual void *support_function() {};
             };
 
             struct Leaf : public Node {
-                int keyCount;
+                std::atomic<int> keyCount;
 
                 Leaf(int keyCount, int number_of_keys) : Node(number_of_keys) {
-                    this->keyCount = keyCount;
                     type = type_leaf;
+                    this->keyCount.store(keyCount);
+                }
+
+                bool is_empty() {
+                    return keyCount.load() > 0;
+                }
+
+                bool contains(int key){
+                    for (int i = 0; i < keyCount; ++i) {
+                        if (keys.load()[i] == key) return true;
+                    }
+                    return false;
                 }
             };
 
             struct InternalNode : public Node {
-                Node **c_nodes;
-                UpdateStep pending;
+                std::atomic<Node *> *c_nodes;
+                std::atomic<UpdateStep *> pending;
 
                 InternalNode(int number_of_keys) : Node(number_of_keys) {
-                    pending = Clean();
-                    c_nodes = new Node *[number_of_keys + 1];
                     type = type_internal;
+                    pending.store(new Clean());
+                    c_nodes = new std::atomic<Node *>[number_of_keys + 1];
                 };
 
                 ~InternalNode() {
                     if (c_nodes) {
-                        delete[] c_nodes;
+                        delete c_nodes;
                     }
                 }
 
-                Node *get_c_node(int key, int &pindex) {
+                std::atomic<Node *> &get_c_node(int key, int &pindex) {
                     int i = 0;
                     for (i; i < number_of_keys; ++i) {
-                        if (key < this->keys[i]) {
+                        if (key < this->keys.load()[i]) {
                             pindex = i;
                             return this->c_nodes[i];
                         }
@@ -88,67 +103,89 @@ namespace cds {
                     pindex = i;
                     return this->c_nodes[i];
                 }
+
+                int number_of_non_empty_node() {
+                    int i = 0;
+                    for (i = 0; i < this->number_of_keys + 1; ++i) {
+                        if (c_nodes[i].load()->type == type_internal) {
+                            int is_empty_node = dynamic_cast<InternalNode *>(c_nodes[i].load())->number_of_non_empty_node();
+                            if (is_empty_node > 0) {
+                                return i;
+                            } else {
+                                continue;
+                            }
+                        }
+                        if (c_nodes[i].load()->type == type_leaf) {
+                            if (dynamic_cast<Leaf *>(c_nodes[i].load())->is_empty()) {
+                                continue;
+                            } else {
+                                return i;
+                            }
+                        }
+                    }
+                    return -1;
+                }
             };
 
             struct ReplaceFlag : public UpdateStep {
-                Node * l;
-                Node * p;
-                Node * newChild;
-                int pindex;
+                std::atomic<Node *> l;
+                std::atomic<Node *> p;
+                std::atomic<Node *> newChild;
+                std::atomic<int> pindex;
 
-                ReplaceFlag(Node * l, Node * p, Node * newChild, int pindex){
+                ReplaceFlag(Node *l, Node *p, Node *newChild, int pindex) {
                     this->type = type_replace;
-                    this->l = l;
-                    this->p = p;
-                    this->newChild = newChild;
-                    this->pindex = pindex;
+                    this->l.store(l);
+                    this->p.store(p);
+                    this->newChild.store(newChild);
+                    this->pindex.store(pindex);
                 };
 
-                ~ReplaceFlag(){
-                    if(this->l) {delete this->l;}
-                    if(this->p) {delete this->p;}
-                    if(this->newChild) {delete this->newChild;}
+                ~ReplaceFlag() {
+//                    if (this->l) { delete this->l; }
+//                    if (this->p) { delete this->p; }
+//                    if (this->newChild) { delete this->newChild; }
                 }
             };
 
             struct PruneFlag : public UpdateStep {
-                Node * l;
-                Node * p;
-                Node * gp;
-                UpdateStep * ppending;
-                int gpindex;
+                std::atomic<Node *> l;
+                std::atomic<Node *> p;
+                std::atomic<Node *> gp;
+                std::atomic<UpdateStep *> ppending;
+                std::atomic<int> gpindex;
 
-                PruneFlag(Node * l, Node * p, Node * gp, UpdateStep * ppending){
+                PruneFlag(Node *l, Node *p, Node *gp, UpdateStep *ppending) {
                     this->type = type_prune;
-                    this->l = l;
-                    this->p = p;
-                    this->gp = gp;
-                    this->ppending = ppending;
+                    this->l.store(l);
+                    this->p.store(p);
+                    this->gp.store(gp);
+                    this->ppending.store(ppending);
                 };
 
-                ~PruneFlag(){
-                    if (this->l) {delete this->l;}
-                    if (this->p) {delete this->p;}
-                    if (this->gp) {delete this->gp;}
+                ~PruneFlag() {
+//                    if (this->l) { delete this->l; }
+//                    if (this->p) { delete this->p; }
+//                    if (this->gp) { delete this->gp; }
                 }
             };
 
 
             struct Mark : public UpdateStep {
-                PruneFlag * pending;
+                std::atomic<PruneFlag *> pending;
 
-                Mark(PruneFlag * pending){
+                Mark(PruneFlag *pending) {
                     this->type = type_mark;
-                    this->pending = pending;
+                    this->pending.store(pending);
                 };
 
-                ~Mark(){
-                    if (this->pending) {delete this->pending;}
+                ~Mark() {
+//                    if (this->pending) { delete this->pending; }
                 }
             };
 
 
-            InternalNode *root;
+            std::atomic<InternalNode *> root;
         protected:
 
 
@@ -161,79 +198,164 @@ namespace cds {
             BrownHelgaKtree(int k) {
                 this->k = k;
 
-                root = new InternalNode(k);
-                InternalNode *leftmostChild = new InternalNode(k);
+                root.store(new InternalNode(k));
+
+                std::atomic<InternalNode *> leftmostChild(new InternalNode(k));
 
                 for (int i = 0; i < k; ++i) {
-                    root->keys[i] = INT_MAX;
-                    leftmostChild->keys[i] = INT_MAX;
+                    root.load()->keys.load()[i] = INT_MAX;
+                    leftmostChild.load()->keys.load()[i] = INT_MAX;
                 }
 
 
                 for (int i = 0; i < k + 1; ++i) {
-                    leftmostChild->c_nodes[i] = new Leaf(0, k);
+                    leftmostChild.load()->c_nodes[i].store(new Leaf(0, k));
                 }
 
-                root->c_nodes[0] = leftmostChild;
+                root.load()->c_nodes[0].store(leftmostChild);
 
                 for (int i = 1; i < k + 1; ++i) {
-                    root->c_nodes[i] = new Leaf(0, k);
+                    root.load()->c_nodes[i].store(new Leaf(0, k));
                 }
             }
 
             ~BrownHelgaKtree() {
                 if (root) {
-                    delete root;
+//                    delete root;
                 }
             }
 
             struct SearchResult {
-                Node *gparent;
-                Node *parent;
-                Node *leaf;
-                UpdateStep *ppending;
-                UpdateStep *gppending;
-                int pindex;
-                int gpindex;
+                std::atomic<Node *> gparent;
+                std::atomic<Node *> parent;
+                std::atomic<Node *> leaf;
+                std::atomic<UpdateStep *> ppending;
+                std::atomic<UpdateStep *> gppending;
+                std::atomic<int> pindex;
+                std::atomic<int> gpindex;
 
                 SearchResult(Node *_gparent, Node *_parent, Node *_leaf, UpdateStep *_ppending,
                              UpdateStep *_gppending, int _pindex, int _gpindex) {
-                    this->parent = _parent;
-                    this->gparent = _gparent;
-                    this->leaf = _leaf;
-                    this->ppending = _ppending;
-                    this->gppending = _gppending;
-                    this->pindex = _pindex;
-                    this->gpindex = _gpindex;
+                    this->parent.store(_parent);
+                    this->gparent.store(_gparent);
+                    this->leaf.store(_leaf);
+                    this->ppending.store(_ppending);
+                    this->gppending.store(_gppending);
+                    this->pindex.store(_pindex);
+                    this->gpindex.store(_gpindex);
                 };
 
                 ~SearchResult() {
-                    if (gparent) { delete gparent; }
-                    if (parent) { delete parent; }
-                    if (leaf) { delete leaf; }
-                    if (ppending) { delete ppending; }
-                    if (gppending) { delete gppending; }
+//                    if (gparent) { delete gparent; }
+//                    if (parent) { delete parent; }
+//                    if (leaf) { delete leaf; }
+//                    if (ppending) { delete ppending; }
+//                    if (gppending) { delete gppending; }
                 }
             };
 
             SearchResult *search(int key) {
-                Node *gparent = root;
-                Node *parent = root;
-                Node *leaf = dynamic_cast<InternalNode *>(parent)->c_nodes[0];
-                UpdateStep *gppending = &(dynamic_cast<InternalNode *>(parent)->pending);
-                UpdateStep *ppending = &(dynamic_cast<InternalNode *>(parent)->pending);
+                Node *gparent = root.load();
+                Node *parent = root.load();
+                Node *leaf = dynamic_cast<InternalNode *>(parent)->c_nodes[0].load();
+                UpdateStep *gppending = dynamic_cast<InternalNode *>(parent)->pending.load();
+                UpdateStep *ppending = dynamic_cast<InternalNode *>(parent)->pending.load();
                 int gpindex = 1;
                 int pindex = 1;
                 while (leaf->type == type_internal) {
                     gparent = parent;
                     gppending = ppending;
                     parent = leaf;
-                    ppending = &(dynamic_cast<InternalNode *>(parent)->pending);
+                    ppending = dynamic_cast<InternalNode *>(parent)->pending.load();
                     gpindex = pindex;
                     leaf = dynamic_cast<InternalNode *>(parent)->get_c_node(key, pindex);
                 }
                 return new SearchResult(gparent, parent, leaf, ppending, gppending, pindex, gpindex);
             }
+
+
+            void help(std::atomic<UpdateStep *> &op) {
+                if (op.load()->type == type_replace) {
+                    std::atomic<ReplaceFlag *> op_0(dynamic_cast<ReplaceFlag *>(op.load()));
+                    help_replace(op_0);
+                } else if (op.load()->type == type_prune) {
+                    std::atomic<PruneFlag *> op_0(dynamic_cast<PruneFlag *>(op.load()));
+                    help_prune(op_0);
+                } else if (op.load()->type == type_mark) {
+                    std::atomic<PruneFlag *> op_0(dynamic_cast<PruneFlag *>(op.load()));
+                    help_marked(op_0);
+                }
+            }
+
+            bool help_prune(std::atomic<PruneFlag *> &op) {
+                UpdateStep * us_0 = op.load()->ppending.load();
+
+                bool result = dynamic_cast<InternalNode*>(op.load()->p.load())->pending.
+                        compare_exchange_strong(us_0, new Mark(op.load()));
+
+                std::atomic<UpdateStep *> newValue(dynamic_cast<InternalNode*>(op.load()->p.load())->pending.load());
+                if (result || (newValue.load()->type == type_mark and dynamic_cast<PruneFlag*>(newValue.load())->ppending.load() == op.load()))
+                {
+                    help_marked(op);
+                    return true;
+                } else {
+                    help(newValue);
+                    UpdateStep * us_0 = op.load();
+                    dynamic_cast<InternalNode*>(op.load()->gp.load())->pending.
+                            compare_exchange_strong(us_0, new Clean);
+                    return false;
+                }
+            }
+
+            void help_marked(std::atomic<PruneFlag *> &op) {
+                int non_empty_node = dynamic_cast<InternalNode *>(op.load()->p.load())->number_of_non_empty_node();
+                Node *other;
+                if (non_empty_node == -1) {
+                    other = dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[0].load();
+                } else {
+                    other = dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[non_empty_node].load();
+                }
+                Node *node_0 = op.load()->p.load();
+                Node *node_1 = other;
+                dynamic_cast<InternalNode *>(op.load()->gp.load())->c_nodes[op.load()->gpindex.load()].
+                        compare_exchange_strong(node_0, node_1);
+
+
+                UpdateStep *node_2 = op.load();
+                UpdateStep *node_3 = new Clean();
+                dynamic_cast<InternalNode *>(op.load()->gp.load())->pending.
+                        compare_exchange_strong(node_2, node_3);
+            }
+
+            void help_replace(std::atomic<ReplaceFlag *> &op) {
+                Node *l = op.load()->l.load();
+                Node *newChild = op.load()->l.load();
+
+                dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[op.load()->pindex.load()].
+                        compare_exchange_strong(l, newChild);
+
+                UpdateStep *a = op.load();
+
+                dynamic_cast<InternalNode *>(op.load()->p.load())->pending.
+                        compare_exchange_strong(a, new Clean());
+
+            }
+
+            bool find(int key){
+                SearchResult * searchResult = search(key);
+                if (dynamic_cast<Leaf*>(searchResult->leaf.load())->contains(key)){
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+
+//            bool insert(int key){
+//                std::atomic<Node *> p;
+//                std::atomic<Node *> newChild;
+//                std::atomic<Leaf *> leaf;
+//
+//            }
 
         };
 
@@ -242,7 +364,10 @@ namespace cds {
 
 int main() {
     auto *brownHelgaKtree = new cds::container::BrownHelgaKtree();
-    auto *result = brownHelgaKtree->search(1);
+
+    std::cout << brownHelgaKtree->find(1) << std::endl;
+    std::cout << "false is " << false << std::endl;
+    std::cout << "true is " << true << std::endl;
     return 0;
 //    std::cout <<NULL;
 }
