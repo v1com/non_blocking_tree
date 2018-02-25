@@ -6,10 +6,20 @@
 #include <atomic>
 #include <vector>
 #include <iostream>
+#include <algorithm>
 
 
 namespace cds {
     namespace container {
+        int * join_and_sort(int * array, int size, int key){
+            int * new_array = new int[size+1];
+            for (int i = 0; i < size; ++i) {
+                new_array[i] = array[i];
+            }
+            new_array[size] = key;
+            std::sort(new_array, new_array+size+1);
+            return new_array;
+        }
 
 
         class BrownHelgaKtree {
@@ -329,7 +339,7 @@ namespace cds {
 
             void help_replace(std::atomic<ReplaceFlag *> &op) {
                 Node *l = op.load()->l.load();
-                Node *newChild = op.load()->l.load();
+                Node *newChild = op.load()->newChild.load();
 
                 dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[op.load()->pindex.load()].
                         compare_exchange_strong(l, newChild);
@@ -350,12 +360,65 @@ namespace cds {
                 }
             }
 
-//            bool insert(int key){
-//                std::atomic<Node *> p;
-//                std::atomic<Node *> newChild;
-//                std::atomic<Leaf *> leaf;
-//
-//            }
+            bool insert(int key){
+                std::atomic<Node *> p;
+                std::atomic<Node *> newChild;
+                std::atomic<Leaf *> l;
+                std::atomic<UpdateStep*> ppending;
+                std::atomic<int> pindex;
+                while (true){
+                    SearchResult * sr = search(key);
+                    p.store(sr->parent.load());
+                    l.store(dynamic_cast<Leaf*>(sr->leaf.load()));
+                    pindex.store(sr->pindex.load());
+                    ppending.store(sr->ppending.load());
+
+                    if (l.load()->contains(key)){
+                        return false;
+                    }
+                    if (ppending.load()->type != type_clean){
+                        help(ppending);
+                    } else {
+                        if (l.load()->keyCount == k){
+                            InternalNode * nc = new InternalNode(k);
+                            int * new_keys = join_and_sort(l.load()->keys.load(),k,key);
+                            int * nc_array = new int[k];
+
+                            for (int j = 0; j < k; ++j) {
+                                nc_array[j] = new_keys[j+1];
+                            }
+
+                            nc->keys.store(nc_array);
+
+                            for (int i = 0; i < k+1; ++i) {
+                                Leaf * node = new Leaf(0,k);
+                                node->keyCount.store(1);
+                                node->keys.load()[0] = new_keys[i];
+                                nc->c_nodes[i].store(node);
+                            }
+                            nc->pending.store(new Clean());
+                            newChild.store(nc);
+                        } else {
+                            int size = l.load()->keyCount.load();
+                            Leaf * nc = new Leaf(size+1,k);
+                            int * new_keys = join_and_sort(l.load()->keys.load(),size,key);
+                            nc->keys.store(new_keys);
+                            newChild.store(nc);
+                        }
+                        std::atomic<ReplaceFlag *> op(new ReplaceFlag(l.load(),p.load(),newChild.load(),pindex.load()));
+                        UpdateStep * us = ppending.load();
+                        bool result = dynamic_cast<InternalNode*>(p.load())->pending.
+                                compare_exchange_strong(us, op.load());
+                        if (result){
+                            help_replace(op);
+                            return true;
+                        } else {
+                            help(dynamic_cast<InternalNode*>(p.load())->pending);
+                        }
+                    }
+
+                }
+            }
 
         };
 
@@ -363,11 +426,42 @@ namespace cds {
 }
 
 int main() {
-    auto *brownHelgaKtree = new cds::container::BrownHelgaKtree();
+    auto *brownHelgaKtree = new cds::container::BrownHelgaKtree(4);
 
-    std::cout << brownHelgaKtree->find(1) << std::endl;
-    std::cout << "false is " << false << std::endl;
-    std::cout << "true is " << true << std::endl;
+    int SIZE = 100;
+
+    for (int i = 0; i < SIZE; ++i) {
+//        if (i == SIZE - 1) {
+//            int res = brownHelgaKtree->insert(i);
+//        }
+        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
+    }
+
+    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+
+    for (int i = 0; i < SIZE; ++i) {
+        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
+    }
+
+    for (int i = 0; i < SIZE; ++i) {
+//        if (i == SIZE - 1) {
+//            int res = brownHelgaKtree->insert(i);
+//        }
+        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
+    }
+
+    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+
+    for (int i = 0; i < SIZE; ++i) {
+        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
+    }
+
+
+//    brownHelgaKtree->insert(1);
+//    std::cout << brownHelgaKtree->find(1) << std::endl;
+//    std::cout << "true is " << true << std::endl;
     return 0;
 //    std::cout <<NULL;
 }
