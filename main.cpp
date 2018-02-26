@@ -87,16 +87,17 @@ namespace cds {
 
                 bool remove_key(int key) {
                     int * keys_0 = keys.load();
+                    int keyCount_0 = keyCount.load();
 
-                    for (int i = 0; i < keyCount; ++i) {
+                    for (int i = 0; i < keyCount_0; ++i) {
                         if (keys_0[i] == key) {
-                            auto *keysCopy = new int[keyCount - 1];
+                            auto *keysCopy = new int[keyCount_0 - 1];
                             std::copy(keys_0, keys_0 + i, keysCopy);
-                            std::copy(keys_0 + i + 1, keys_0 + keyCount, keysCopy + i);
+                            std::copy(keys_0 + i + 1, keys_0 + keyCount_0, keysCopy + i);
                             delete[] keys_0;
 
                             keys.store(keysCopy);
-                            keyCount.store(keyCount - 1);
+                            keyCount.store(keyCount_0 - 1);
                             return true;
                         }
                     }
@@ -438,9 +439,11 @@ namespace cds {
             int non_empty_childs_count(InternalNode * node) {
                 int count = 0;
                 for (int i = 0; i < node->number_of_keys; ++i) {
-                    if (node->c_nodes[i].load()->type == type_internal) {
-                        if (dynamic_cast<InternalNode *>(node->c_nodes[i].load())->number_of_keys > 0)
-                            count ++;
+                    if (node->c_nodes[i].load()->type == type_internal)
+                        count ++;
+                    else if (node->c_nodes[i].load()->type == type_leaf) {
+                        if (dynamic_cast<Leaf *> (node->c_nodes[i].load())->keyCount > 0)
+                            count++;
                     }
                 }
                 return count;
@@ -448,52 +451,58 @@ namespace cds {
 
             bool remove(int key) {
                 SearchResult * searchResult;
-                int pindex, gpindex;
+                std::atomic <Node *> gp, p;
+                std::atomic <UpdateStep *> gppending, ppending;
+                std::atomic <Leaf *> l;
+                std::atomic <int> pindex, gpindex;
 
                 while(true) {
                     searchResult = search(key);
-                    if (!dynamic_cast<Leaf*>(searchResult->leaf.load())->contains(key))
+                    gp.store(searchResult->gparent);
+                    p.store(searchResult->parent);
+                    gppending.store(searchResult->gppending);
+                    ppending.store(searchResult->ppending);
+                    l.store(dynamic_cast<Leaf*>(searchResult->leaf.load()));
+                    pindex.store(searchResult->pindex);
+                    gpindex.store(searchResult->gpindex);
+
+                    if (!l.load()->contains(key))
                         return false;
-                    if (searchResult->gppending.load()->type != type_clean) {
-                        help(searchResult->gppending);
-                    } else if (searchResult->ppending.load()->type != type_clean) {
-                        help(searchResult->ppending);
+
+                    if (gppending.load()->type != type_clean) {
+                        help(gppending);
+                    } else if (ppending.load()->type != type_clean) {
+                        help(ppending);
                     } else {
-                        int ccount = non_empty_childs_count(dynamic_cast<InternalNode *> (searchResult->parent.load()));
-                        if (ccount == 2 && searchResult->leaf.load()->number_of_keys == 1) {
-                            auto * op = new PruneFlag(searchResult->leaf.load(), searchResult->parent.load(),
-                            searchResult->gparent.load(), searchResult->ppending.load(), searchResult->gpindex.load());
+                        int ccount = non_empty_childs_count(dynamic_cast<InternalNode *> (p.load()));
+                        if (ccount == 2 && l.load()->keyCount == 1) { //pruning deletion
+                            std::atomic <PruneFlag *> op(new PruneFlag(l.load(), p.load(), gp.load(), ppending.load(), gpindex.load()));
+                            auto expectedOp = gppending.load();
 
-                            auto expectedOp = searchResult->gppending.load();
-                            auto *newOp = dynamic_cast<UpdateStep *> (op);
+                            bool result = dynamic_cast<InternalNode*>(gp.load())->pending.compare_exchange_strong(expectedOp, op.load());
 
-                            bool result = dynamic_cast<InternalNode*>(searchResult->gparent.load())->pending.
-                                    compare_exchange_strong(expectedOp, newOp);
-                            std::atomic <PruneFlag *> atomicOp(op);
                             if (result) {
-                                if (help_prune(atomicOp))
+                                if (help_prune(op))
                                     return true;
                                 else
-                                    help(dynamic_cast<InternalNode*> (searchResult->gparent.load())->pending);
+                                    help(dynamic_cast<InternalNode*> (gp.load())->pending);
                             }
-                        } else {
-                            auto * newLeaf = dynamic_cast<Leaf *> (searchResult->leaf.load());
+                        } else { //simple deletion
+                            auto * newLeaf = l.load();
                             if (!newLeaf->remove_key(key)) return false;
 
                             std::atomic <Node *> newChild(dynamic_cast<Node *> (newLeaf));
-                            auto * op = new ReplaceFlag(searchResult->leaf, searchResult->parent, newChild,
-                                                               searchResult->pindex);
+                            std::atomic<ReplaceFlag *> op(new ReplaceFlag(l, p, newChild, pindex));
 
-                            UpdateStep *expectedOp = searchResult->ppending.load();
+                            UpdateStep *expectedOp = ppending.load();
 
-                            bool result = dynamic_cast<InternalNode*>(searchResult->gparent.load())->pending.
-                                    compare_exchange_strong(expectedOp, op);
+                            bool result = dynamic_cast<InternalNode*>(gp.load())->pending.
+                                    compare_exchange_strong(expectedOp, op.load());
                             if (result) {
-                                std::atomic <ReplaceFlag *> atomicOp(op);
-                                help_replace(atomicOp);
+                                help_replace(op);
                                 return true;
                             } else {
-                                help(dynamic_cast<InternalNode*>(searchResult->parent.load())->pending);
+                                help(dynamic_cast<InternalNode*>(p.load())->pending);
                             }
                         }
                     }
@@ -537,6 +546,13 @@ int main() {
         std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
     }
 
+    for (int i = 0; i < SIZE; ++i) {
+        std::cout << i << " deleted with "<< brownHelgaKtree->remove(i) << std::endl;
+    }
+
+    for (int i = 0; i < SIZE; ++i) {
+        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
+    }
 
 //    brownHelgaKtree->insert(1);
 //    std::cout << brownHelgaKtree->find(1) << std::endl;
