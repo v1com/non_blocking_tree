@@ -84,25 +84,6 @@ namespace cds {
                     }
                     return false;
                 }
-
-                bool remove_key(int key) {
-                    int * keys_0 = keys.load();
-                    int keyCount_0 = keyCount.load();
-
-                    for (int i = 0; i < keyCount_0; ++i) {
-                        if (keys_0[i] == key) {
-                            auto *keysCopy = new int[keyCount_0 - 1];
-                            std::copy(keys_0, keys_0 + i, keysCopy);
-                            std::copy(keys_0 + i + 1, keys_0 + keyCount_0, keysCopy + i);
-                            delete[] keys_0;
-
-                            keys.store(keysCopy);
-                            keyCount.store(keyCount_0 - 1);
-                            return true;
-                        }
-                    }
-                    return false;
-                }
             };
 
             struct InternalNode : public Node {
@@ -458,13 +439,13 @@ namespace cds {
 
                 while(true) {
                     searchResult = search(key);
-                    gp.store(searchResult->gparent);
-                    p.store(searchResult->parent);
-                    gppending.store(searchResult->gppending);
-                    ppending.store(searchResult->ppending);
+                    gp.store(searchResult->gparent.load());
+                    p.store(searchResult->parent.load());
+                    gppending.store(searchResult->gppending.load());
+                    ppending.store(searchResult->ppending.load());
                     l.store(dynamic_cast<Leaf*>(searchResult->leaf.load()));
-                    pindex.store(searchResult->pindex);
-                    gpindex.store(searchResult->gpindex);
+                    pindex.store(searchResult->pindex.load());
+                    gpindex.store(searchResult->gpindex.load());
 
                     if (!l.load()->contains(key))
                         return false;
@@ -488,8 +469,20 @@ namespace cds {
                                     help(dynamic_cast<InternalNode*> (gp.load())->pending);
                             }
                         } else { //simple deletion
-                            auto * newLeaf = l.load();
-                            if (!newLeaf->remove_key(key)) return false;
+                            auto * newLeaf = new Leaf(l.load()->keyCount.load() - 1, l.load()->number_of_keys);
+                            int * newKeys = new int[newLeaf->keyCount.load()];
+                            for (int i = 0; i < l.load()->keyCount.load(); i++) {
+                                if (l.load()->keys.load()[i] == key) {
+                                    for (int j = 0; j < newLeaf->keyCount; j++) {
+                                        if (j < i)
+                                            newKeys[j] = l.load()->keys.load()[i];
+                                        else
+                                            newKeys[j] = l.load()->keys.load()[i + 1];
+                                    }
+                                    break;
+                                }
+                            }
+                            newLeaf->keys.store(newKeys);
 
                             std::atomic <Node *> newChild(dynamic_cast<Node *> (newLeaf));
                             std::atomic<ReplaceFlag *> op(new ReplaceFlag(l, p, newChild, pindex));
