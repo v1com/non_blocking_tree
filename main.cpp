@@ -489,7 +489,7 @@ namespace cds {
 
                             UpdateStep *expectedOp = ppending.load();
 
-                            bool result = dynamic_cast<InternalNode*>(gp.load())->pending.
+                            bool result = dynamic_cast<InternalNode*>(p.load())->pending.
                                     compare_exchange_strong(expectedOp, op.load());
                             if (result) {
                                 help_replace(op);
