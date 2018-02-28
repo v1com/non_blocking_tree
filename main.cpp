@@ -75,7 +75,7 @@ namespace cds {
                 }
 
                 bool is_empty() {
-                    return keyCount.load() > 0;
+                    return keyCount.load() <= 0;
                 }
 
                 bool contains(int key){
@@ -83,6 +83,14 @@ namespace cds {
                         if (keys.load()[i] == key) return true;
                     }
                     return false;
+                }
+
+                void print_keys(){
+                    std::cout << "keys of " << this << std::endl;
+                    for (int i = 0; i < keyCount; ++i) {
+                        std::cout << "key[" << i << "] == " << keys.load()[i] << std::endl;
+                    }
+                    std::cout << "end of printing keys of " << this << std::endl;
                 }
             };
 
@@ -114,12 +122,13 @@ namespace cds {
                     return this->c_nodes[i];
                 }
 
-                int number_of_non_empty_node() {
+                int number_of_non_empty_node(Node * which_deleting) {
                     int i = 0;
                     for (i = 0; i < this->number_of_keys + 1; ++i) {
+                        if (c_nodes[i].load() == which_deleting) continue;
                         if (c_nodes[i].load()->type == type_internal) {
-                            int is_empty_node = dynamic_cast<InternalNode *>(c_nodes[i].load())->number_of_non_empty_node();
-                            if (is_empty_node > 0) {
+                            int is_empty_node = dynamic_cast<InternalNode *>(c_nodes[i].load())->number_of_non_empty_node(which_deleting);
+                            if (is_empty_node >= 0) {
                                 return i;
                             } else {
                                 continue;
@@ -271,8 +280,8 @@ namespace cds {
                 Node *leaf = dynamic_cast<InternalNode *>(parent)->c_nodes[0].load();
                 UpdateStep *gppending = dynamic_cast<InternalNode *>(parent)->pending.load();
                 UpdateStep *ppending = dynamic_cast<InternalNode *>(parent)->pending.load();
-                int gpindex = 1;
-                int pindex = 1;
+                int gpindex = 0;
+                int pindex = 0;
                 while (leaf->type == type_internal) {
                     gparent = parent;
                     gppending = ppending;
@@ -305,7 +314,7 @@ namespace cds {
                         compare_exchange_strong(us_0, new Mark(op.load()));
 
                 std::atomic<UpdateStep *> newValue(dynamic_cast<InternalNode*>(op.load()->p.load())->pending.load());
-                if (result || (newValue.load()->type == type_mark and dynamic_cast<PruneFlag*>(newValue.load())->ppending.load() == op.load()))
+                if (result || (newValue.load()->type == type_mark && dynamic_cast<Mark*>(newValue.load())->pending.load() == op.load()))
                 {
                     help_marked(op);
                     return true;
@@ -319,22 +328,39 @@ namespace cds {
             }
 
             void help_marked(std::atomic<PruneFlag *> &op) {
-                int non_empty_node = dynamic_cast<InternalNode *>(op.load()->p.load())->number_of_non_empty_node();
+//                std::cout<< "[0] Leaf which we want to delete: " << op.load()->l.load() << std::endl;
+                int non_empty_node = dynamic_cast<InternalNode *>(op.load()->p.load())->number_of_non_empty_node(op.load()->l.load());
                 Node *other;
                 if (non_empty_node == -1) {
                     other = dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[0].load();
                 } else {
                     other = dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[non_empty_node].load();
                 }
+
+//                std::cout << "[0] Other leaf has adress: " << other << std::endl;
+
+
+
+//                dynamic_cast<Leaf*>(other)->print_keys();
+
                 Node *node_0 = op.load()->p.load();
                 Node *node_1 = other;
-                dynamic_cast<InternalNode *>(op.load()->gp.load())->c_nodes[op.load()->gpindex.load()].
+
+                int count_non_empty = non_empty_childs_count(dynamic_cast<InternalNode*>(node_0));
+
+
+                Node * cur_node = dynamic_cast<InternalNode *>(op.load()->gp.load())->c_nodes[op.load()->gpindex.load()].load();
+
+                bool res;
+                res = dynamic_cast<InternalNode *>(op.load()->gp.load())->c_nodes[op.load()->gpindex.load()].
                         compare_exchange_strong(node_0, node_1);
 
 
                 UpdateStep *node_2 = op.load();
                 UpdateStep *node_3 = new Clean();
-                dynamic_cast<InternalNode *>(op.load()->gp.load())->pending.
+                UpdateStep * cur_us = dynamic_cast<InternalNode *>(op.load()->gp.load())->pending.load();
+
+                res = dynamic_cast<InternalNode *>(op.load()->gp.load())->pending.
                         compare_exchange_strong(node_2, node_3);
             }
 
@@ -342,18 +368,19 @@ namespace cds {
                 Node *l = op.load()->l.load();
                 Node *newChild = op.load()->newChild.load();
 
-                dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[op.load()->pindex.load()].
+                auto t = dynamic_cast<InternalNode *>(op.load()->p.load())->c_nodes[op.load()->pindex.load()].
                         compare_exchange_strong(l, newChild);
 
                 UpdateStep *a = op.load();
 
-                dynamic_cast<InternalNode *>(op.load()->p.load())->pending.
+                auto tt = dynamic_cast<InternalNode *>(op.load()->p.load())->pending.
                         compare_exchange_strong(a, new Clean());
 
             }
 
             bool find(int key){
                 SearchResult * searchResult = search(key);
+//                dynamic_cast<Leaf*>(searchResult->leaf.load())->print_keys();
                 return dynamic_cast<Leaf*>(searchResult->leaf.load())->contains(key);
             }
 
@@ -370,13 +397,16 @@ namespace cds {
                     pindex.store(sr->pindex.load());
                     ppending.store(sr->ppending.load());
 
+                    int * ll = dynamic_cast<Leaf*>(sr->leaf.load())->keys.load();
+
+
                     if (l.load()->contains(key)){
                         return false;
                     }
                     if (ppending.load()->type != type_clean){
                         help(ppending);
                     } else {
-                        if (l.load()->keyCount == k){
+                        if (l.load()->keyCount.load() == k){
                             InternalNode * nc = new InternalNode(k);
                             int * new_keys = join_and_sort(l.load()->keys.load(),k,key);
                             int * nc_array = new int[k];
@@ -419,11 +449,17 @@ namespace cds {
 
             int non_empty_childs_count(InternalNode * node) {
                 int count = 0;
-                for (int i = 0; i < node->number_of_keys; ++i) {
-                    if (node->c_nodes[i].load()->type == type_internal)
-                        count ++;
+                for (int i = 0; i < node->number_of_keys+1; ++i) {
+                    if (node->c_nodes[i].load()->type == type_internal){
+                        int c_count = non_empty_childs_count(dynamic_cast<InternalNode*>(node->c_nodes[i].load()));
+                        if (c_count > 0) {
+                            count ++;
+                        }
+                    }
                     else if (node->c_nodes[i].load()->type == type_leaf) {
-                        if (dynamic_cast<Leaf *> (node->c_nodes[i].load())->keyCount > 0)
+//                        std::cout << "wtf" << i << dynamic_cast<Leaf *> (node->c_nodes[i].load())->keyCount.load() <<std::endl;
+//                        std::cout << "value is " << dynamic_cast<Leaf *> (node->c_nodes[i].load())->keys.load()[0] << std:: endl;
+                        if (dynamic_cast<Leaf *> (node->c_nodes[i].load())->keyCount.load() > 0)
                             count++;
                     }
                 }
@@ -447,6 +483,8 @@ namespace cds {
                     pindex.store(searchResult->pindex.load());
                     gpindex.store(searchResult->gpindex.load());
 
+                    int * ll = dynamic_cast<Leaf*>(searchResult->leaf.load())->keys.load();
+
                     if (!l.load()->contains(key))
                         return false;
 
@@ -455,10 +493,23 @@ namespace cds {
                     } else if (ppending.load()->type != type_clean) {
                         help(ppending);
                     } else {
+//                        std::cout << l.load()->keyCount.load() << std::endl;
                         int ccount = non_empty_childs_count(dynamic_cast<InternalNode *> (p.load()));
-                        if (ccount == 2 && l.load()->keyCount == 1) { //pruning deletion
+                        auto r_m = root.load();
+                        auto r_f_c = dynamic_cast<InternalNode*>(root.load())->c_nodes[0].load();
+
+                        auto ref_l = l.load();
+                        auto ref_p = p.load();
+                        auto ref_gp = gp.load();
+                        auto ref_gp_f_c = dynamic_cast<InternalNode*>(ref_gp)->c_nodes[0].load();
+
+                        if (ccount == 2 && l.load()->keyCount.load() == 1) { //pruning deletion
                             std::atomic <PruneFlag *> op(new PruneFlag(l.load(), p.load(), gp.load(), ppending.load(), gpindex.load()));
-                            auto expectedOp = gppending.load();
+//                            std::cout << "[0] Removing leaf has adress: " << l.load() << std:: endl;
+                            auto * currentOp = dynamic_cast<InternalNode*>(gp.load())->pending.load();
+                            auto * expectedOp = gppending.load();
+                            auto * tmp_p = p.load();
+                            auto * tmp_gp = gp.load();
 
                             bool result = dynamic_cast<InternalNode*>(gp.load())->pending.compare_exchange_strong(expectedOp, op.load());
 
@@ -469,18 +520,16 @@ namespace cds {
                                     help(dynamic_cast<InternalNode*> (gp.load())->pending);
                             }
                         } else { //simple deletion
-                            auto * newLeaf = new Leaf(l.load()->keyCount.load() - 1, l.load()->number_of_keys);
+                            auto * newLeaf = new Leaf(l.load()->keyCount.load() - 1, k);
                             int * newKeys = new int[newLeaf->keyCount.load()];
+                            int * oldKeys = l.load()->keys.load();
+                            int j = 0;
                             for (int i = 0; i < l.load()->keyCount.load(); i++) {
-                                if (l.load()->keys.load()[i] == key) {
-                                    for (int j = 0; j < newLeaf->keyCount; j++) {
-                                        if (j < i)
-                                            newKeys[j] = l.load()->keys.load()[i];
-                                        else
-                                            newKeys[j] = l.load()->keys.load()[i + 1];
-                                    }
-                                    break;
+                                if (l.load()->keys.load()[i] == key){
+                                    continue;
                                 }
+                                newKeys[j] = oldKeys[i];
+                                j++;
                             }
                             newLeaf->keys.store(newKeys);
 
@@ -510,6 +559,63 @@ int main() {
     auto *brownHelgaKtree = new cds::container::BrownHelgaKtree(4);
 
     int SIZE = 100;
+    bool res;
+
+//    res = brownHelgaKtree->insert(1);
+//    std:: cout << "i1-" << res << std::endl;
+//
+//    res = brownHelgaKtree->insert(2);
+//    std:: cout << "i2-" << res << std::endl;
+//
+//    res = brownHelgaKtree->insert(3);
+//    std:: cout << "i3-" << res << std::endl;
+//
+//    res = brownHelgaKtree->insert(4);
+//    std:: cout << "i4-" << res << std::endl;
+////
+//    std:: cout << "find 11 -" << res << std::endl;
+//
+//    int type = dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
+//            c_nodes[0].load())->c_nodes[0].load()->type;
+//    cds::container::BrownHelgaKtree::Leaf * leaf = dynamic_cast<cds::container::BrownHelgaKtree::Leaf *>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
+//            c_nodes[0].load())->c_nodes[0].load());
+//    int re1 = leaf->keyCount.load();
+//    int * re2 = leaf->keys.load();
+//    res = brownHelgaKtree->insert(5);
+//    std:: cout << "i5-" << res << std::endl;
+//
+//    res = brownHelgaKtree->insert(6);
+//    std:: cout << "i6-" << res << std::endl;
+////
+//    res = brownHelgaKtree->remove(1);
+//    std:: cout << "r1-" << res << std::endl;
+////
+////    leaf = dynamic_cast<cds::container::BrownHelgaKtree::Leaf *>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
+////            c_nodes[0].load())->c_nodes[0].load());
+////    re1 = leaf->keyCount.load();
+////    re2 = leaf->keys.load();
+////
+//    res = brownHelgaKtree->remove(2);
+//    std:: cout << "r2-" << res << std::endl;
+//
+//    res = brownHelgaKtree->remove(3);
+//    std:: cout << "r3-" << res << std::endl;
+//
+//    res = brownHelgaKtree->find(5);
+//    std:: cout << "find 5-" << res << std::endl;
+//
+//    res = brownHelgaKtree->remove(4);
+//    std:: cout << "r4-" << res << std::endl;
+//
+//    res = brownHelgaKtree->find(5);
+//    std:: cout << "find 5 -" << res << std::endl;
+//
+//    res = brownHelgaKtree->remove(5);
+//    std:: cout << "r5-" << res << std::endl;
+//
+//    res = brownHelgaKtree->remove(6);
+//    std:: cout << "r6-" << res << std::endl;
+
 
     for (int i = 0; i < SIZE; ++i) {
 //        if (i == SIZE - 1) {
@@ -517,39 +623,39 @@ int main() {
 //        }
         std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
     }
-
+//
     std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
     std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
 
     for (int i = 0; i < SIZE; ++i) {
         std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
     }
-
-    for (int i = 0; i < SIZE; ++i) {
-//        if (i == SIZE - 1) {
-//            int res = brownHelgaKtree->insert(i);
-//        }
-        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
-    }
-
-    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-
-    for (int i = 0; i < SIZE; ++i) {
-        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
-    }
-
+////
+////    for (int i = 0; i < SIZE; ++i) {
+//////        if (i == SIZE - 1) {
+//////            int res = brownHelgaKtree->insert(i);
+//////        }
+////        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
+////    }
+////
+////    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+////    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
+////
+////    for (int i = 0; i < SIZE; ++i) {
+////        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
+////    }
+////
     for (int i = 0; i < SIZE; ++i) {
         std::cout << i << " deleted with "<< brownHelgaKtree->remove(i) << std::endl;
     }
-
+//
     for (int i = 0; i < SIZE; ++i) {
         std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
     }
-
-//    brownHelgaKtree->insert(1);
-//    std::cout << brownHelgaKtree->find(1) << std::endl;
-//    std::cout << "true is " << true << std::endl;
+//
+////    brownHelgaKtree->insert(1);
+////    std::cout << brownHelgaKtree->find(1) << std::endl;
+////    std::cout << "true is " << true << std::endl;
     return 0;
 //    std::cout <<NULL;
 }
