@@ -1,13 +1,14 @@
 #ifndef CDSLIB_CONTAINER_BROWN_HELGA_KTREE_H
 #define CDSLIB_CONTAINER_BROWN_HELGA_KTREE_H
 
-
 #include <climits>
 #include <atomic>
 #include <vector>
 #include <iostream>
 #include <algorithm>
-
+#include <thread>
+#include <random>
+//#include "mingw.thread.h"
 
 namespace cds {
     namespace container {
@@ -554,110 +555,106 @@ namespace cds {
 
     }
 }
+void thread_insert(int n, int size, cds::container::BrownHelgaKtree *tree) {
+    for (int i = 0; i < size; ++i) {
+        std::string log = "thread_" + std::to_string(n);
+        if (tree->insert(i))
+            log += " inserted ";
+        else
+            log += " did not insert ";
+
+        log += std::to_string(i) + "\n";
+        std::cout << log;
+    }
+}
+
+void thread_random_insert(int n, int size, cds::container::BrownHelgaKtree *tree) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(1, size - 1);
+
+    for (int i = 0; i < size; ++i) {
+        std::string log = "thread_" + std::to_string(n);
+        int rand = dist(gen);
+        if (tree->insert(rand))
+            log += " inserted ";
+        else
+            log += " did not insert ";
+
+        log += std::to_string(rand) + "\n";
+        std::cout << log;
+    }
+}
+
+void thread_random_remove(int n, int size, cds::container::BrownHelgaKtree *tree) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dist(1, size - 1);
+
+    for (int i = 0; i < size; ++i) {
+        std::string log = "thread_" + std::to_string(n);
+        int rand = dist(gen);
+        if (tree->remove(rand))
+            log += " removed ";
+        else
+            log += " did not remove ";
+
+        log += std::to_string(rand) + "\n";
+        std::cout << log;
+    }
+}
+
+void thread_remove(int n, int size, cds::container::BrownHelgaKtree *tree) {
+    for (int i = 0; i < size; ++i) {
+        std::string log = "thread_" + std::to_string(n);
+        if (tree->remove(i))
+            log += " removed ";
+        else
+            log += " did not remove ";
+
+        log += std::to_string(i) + "\n";
+        std::cout << log;
+    }
+}
+
+void found_test() {
+    auto *brownHelgaKtree = new cds::container::BrownHelgaKtree(4);
+    int SIZE = 100;
+    std::thread t1(thread_insert, 1, SIZE, brownHelgaKtree);
+    std::thread t2(thread_insert, 2, SIZE, brownHelgaKtree);
+    std::thread t3(thread_random_insert, 3, SIZE, brownHelgaKtree);
+    t1.join();
+    t2.join();
+    t3.join();
+
+    bool allFound = true;
+    for (int i = 0; i < SIZE; i++) {
+        if (!brownHelgaKtree->find(i))
+            allFound = false;
+    }
+    std::cout << std::endl << (allFound ? "ALL KEYS FOUND" : "FIND TEST FAILED") << std::endl;
+}
+
+void insert_with_remove_test() {
+    auto *brownHelgaKtree = new cds::container::BrownHelgaKtree(4);
+    int SIZE = 100;
+    std::thread t1(thread_insert, 1, SIZE, brownHelgaKtree);
+    std::thread t2(thread_random_remove, 2, SIZE, brownHelgaKtree);
+    std::thread t3(thread_random_insert, 3, SIZE, brownHelgaKtree);
+  //  std::thread t4(thread_remove, 4, SIZE, brownHelgaKtree);
+
+    t1.join();
+    t2.join();
+    t3.join();
+ //   t4.join();
+}
 
 int main() {
-    auto *brownHelgaKtree = new cds::container::BrownHelgaKtree(4);
-
-    int SIZE = 100;
-    bool res;
-
-//    res = brownHelgaKtree->insert(1);
-//    std:: cout << "i1-" << res << std::endl;
-//
-//    res = brownHelgaKtree->insert(2);
-//    std:: cout << "i2-" << res << std::endl;
-//
-//    res = brownHelgaKtree->insert(3);
-//    std:: cout << "i3-" << res << std::endl;
-//
-//    res = brownHelgaKtree->insert(4);
-//    std:: cout << "i4-" << res << std::endl;
-////
-//    std:: cout << "find 11 -" << res << std::endl;
-//
-//    int type = dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
-//            c_nodes[0].load())->c_nodes[0].load()->type;
-//    cds::container::BrownHelgaKtree::Leaf * leaf = dynamic_cast<cds::container::BrownHelgaKtree::Leaf *>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
-//            c_nodes[0].load())->c_nodes[0].load());
-//    int re1 = leaf->keyCount.load();
-//    int * re2 = leaf->keys.load();
-//    res = brownHelgaKtree->insert(5);
-//    std:: cout << "i5-" << res << std::endl;
-//
-//    res = brownHelgaKtree->insert(6);
-//    std:: cout << "i6-" << res << std::endl;
-////
-//    res = brownHelgaKtree->remove(1);
-//    std:: cout << "r1-" << res << std::endl;
-////
-////    leaf = dynamic_cast<cds::container::BrownHelgaKtree::Leaf *>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(dynamic_cast<cds::container::BrownHelgaKtree::InternalNode*>(brownHelgaKtree->root.load())->
-////            c_nodes[0].load())->c_nodes[0].load());
-////    re1 = leaf->keyCount.load();
-////    re2 = leaf->keys.load();
-////
-//    res = brownHelgaKtree->remove(2);
-//    std:: cout << "r2-" << res << std::endl;
-//
-//    res = brownHelgaKtree->remove(3);
-//    std:: cout << "r3-" << res << std::endl;
-//
-//    res = brownHelgaKtree->find(5);
-//    std:: cout << "find 5-" << res << std::endl;
-//
-//    res = brownHelgaKtree->remove(4);
-//    std:: cout << "r4-" << res << std::endl;
-//
-//    res = brownHelgaKtree->find(5);
-//    std:: cout << "find 5 -" << res << std::endl;
-//
-//    res = brownHelgaKtree->remove(5);
-//    std:: cout << "r5-" << res << std::endl;
-//
-//    res = brownHelgaKtree->remove(6);
-//    std:: cout << "r6-" << res << std::endl;
-
-
-    for (int i = 0; i < SIZE; ++i) {
-//        if (i == SIZE - 1) {
-//            int res = brownHelgaKtree->insert(i);
-//        }
-        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
-    }
-//
-    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-
-    for (int i = 0; i < SIZE; ++i) {
-        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
-    }
-////
-////    for (int i = 0; i < SIZE; ++i) {
-//////        if (i == SIZE - 1) {
-//////            int res = brownHelgaKtree->insert(i);
-//////        }
-////        std::cout << i << " inserted with "<<brownHelgaKtree->insert(i)  << std::endl;
-////    }
-////
-////    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-////    std::cout << "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++" << std::endl;
-////
-////    for (int i = 0; i < SIZE; ++i) {
-////        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
-////    }
-////
-    for (int i = 0; i < SIZE; ++i) {
-        std::cout << i << " deleted with "<< brownHelgaKtree->remove(i) << std::endl;
-    }
-//
-    for (int i = 0; i < SIZE; ++i) {
-        std::cout << i << " found with "<<brownHelgaKtree->find(i)  << std::endl;
-    }
-//
-////    brownHelgaKtree->insert(1);
-////    std::cout << brownHelgaKtree->find(1) << std::endl;
-////    std::cout << "true is " << true << std::endl;
+    std::cout << "**********************FOUND TEST STARTED**********************" << std::endl;
+    found_test();
+    std::cout << "**********************INSERT WITH REMOVE TEST STARTED**********************" << std::endl;
+    insert_with_remove_test();
     return 0;
-//    std::cout <<NULL;
 }
 
 #endif // #ifndef CDSLIB_CONTAINER_BROWN_HELGA_KTREE_H
