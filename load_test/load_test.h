@@ -82,8 +82,6 @@ bool test_same_count_operation() {
     int diff = abs(*count_insert_0 + *count_remove_0 + *count_insert_1 + *count_remove_1 +
     *count_insert_2 + *count_insert_3 + *count_remove_2 + *count_remove_3);
 
-    std::cout << "diff is " << diff << std::endl;
-
     delete count_insert_0;
     delete count_insert_1;
     delete count_insert_2;
